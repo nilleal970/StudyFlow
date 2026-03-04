@@ -1,4 +1,4 @@
-import { addDays, addMonths, format } from 'date-fns';
+import { addDays, addMonths, format, parse } from 'date-fns';
 
 export interface StudyContent {
   id: string;
@@ -73,18 +73,26 @@ export interface Simulado {
   completed: boolean;
 }
 
+export const parseDate = (dateStr: string): Date => {
+  // Suporta formato dd/MM/yyyy e yyyy-MM-dd
+  if (dateStr.includes('/')) {
+    return parse(dateStr, 'dd/MM/yyyy', new Date());
+  }
+  return parse(dateStr, 'yyyy-MM-dd', new Date());
+};
+
 export const calculateRevisions = (startDate: Date): Omit<RevisionTask, 'id' | 'contentId'>[] => {
-  const intervals: { type: RevisionTask['type']; days?: number; months?: number; label: string }[] = [
-    { type: '1d', days: 0, label: 'Estudo Inicial' },
-    { type: '1d', days: 1, label: 'Revisão 1 Dia' },
-    { type: '7d', days: 7, label: 'Revisão 7 Dias' },
-    { type: '15d', days: 15, label: 'Revisão 15 Dias' },
-    { type: '1m', months: 1, label: 'Revisão 1 Mês' },
+  const intervals: { type: RevisionTask['type']; days: number | null; months: number | null; label: string }[] = [
+    { type: '1d', days: 0, months: null, label: 'Estudo Inicial' },
+    { type: '1d', days: 1, months: null, label: 'Revisão 1 Dia' },
+    { type: '7d', days: 7, months: null, label: 'Revisão 7 Dias' },
+    { type: '15d', days: 15, months: null, label: 'Revisão 15 Dias' },
+    { type: '1m', days: null, months: 1, label: 'Revisão 1 Mês' },
   ];
 
   return intervals.map(interval => {
     let date: Date;
-    if (interval.days) {
+    if (interval.days !== null) {
       date = addDays(startDate, interval.days);
     } else {
       date = addMonths(startDate, interval.months!);
