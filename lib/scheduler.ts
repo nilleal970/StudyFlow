@@ -106,7 +106,8 @@ export const calculateRevisions = (startDate: Date): Omit<RevisionTask, 'id' | '
 };
 
 export const getNextMonthlyRevision = (lastDate: string): Omit<RevisionTask, 'id' | 'contentId'> => {
-  const date = addMonths(new Date(lastDate), 1);
+  const [year, month, day] = lastDate.split('-').map(Number);
+  const date = addMonths(new Date(year, month - 1, day), 1);
   return {
     scheduledDate: format(date, 'yyyy-MM-dd'),
     type: 'monthly',
