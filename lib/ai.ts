@@ -139,24 +139,26 @@ export interface SimuladoQuestionAI {
   explanation: string;
 }
 
-export const generateSimulado = async (subject: string, quantity: number): Promise<SimuladoQuestionAI[]> => {
+export const generateSimulado = async (subject: string, quantity: number, banca?: string): Promise<SimuladoQuestionAI[]> => {
   const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
   if (!apiKey) throw new Error("Gemini API key is missing");
 
   const ai = new GoogleGenAI({ apiKey });
   
   const prompt = `
-    Crie um simulado de concurso público sobre o tema: "${subject}".
+    Crie um simulado de concurso público sobre o tema: "${subject}"${banca ? ` focado na banca examinadora: ${banca}` : ''}.
+    ${banca ? `Pesquise questões reais ou o estilo de cobrança da banca ${banca} para este tema.` : 'Gere questões no estilo de grandes bancas brasileiras.'}
     Gere exatamente ${quantity} questões de múltipla escolha.
     Cada questão deve ter 4 opções (A, B, C, D).
     Indique o índice da opção correta (0 a 3) e forneça uma breve explicação do porquê aquela é a resposta correta.
-    As questões devem ser desafiadoras e no estilo de bancas de concursos brasileiros (como FGV, FCC, Cebraspe).
+    As questões devem ser desafiadoras.
   `;
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: prompt,
     config: {
+      tools: banca ? [{ googleSearch: {} }] : [],
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.ARRAY,

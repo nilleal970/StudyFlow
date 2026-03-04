@@ -1674,6 +1674,7 @@ function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado
   const isLight = theme === 'light';
   const [isGenerating, setIsGenerating] = useState(false);
   const [subject, setSubject] = useState('');
+  const [banca, setBanca] = useState('');
   const [quantity, setQuantity] = useState(5);
   const [activeSimulado, setActiveSimulado] = useState<Simulado | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -1683,10 +1684,10 @@ function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado
     if (!subject) return;
     setIsGenerating(true);
     try {
-      const questions = await generateSimulado(subject, quantity);
+      const questions = await generateSimulado(subject, quantity, banca);
       const newSimulado: Simulado = {
         id: Math.random().toString(36).substr(2, 9),
-        subject,
+        subject: banca ? `${subject} (${banca})` : subject,
         date: new Date().toISOString(),
         questions: questions.map((q, i) => ({ ...q, id: `q-${i}` })),
         score: 0,
@@ -1879,11 +1880,21 @@ function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado
               />
             </div>
             <div>
+              <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Banca Examinadora (Opcional)</label>
+              <input 
+                type="text" 
+                value={banca}
+                onChange={(e) => setBanca(e.target.value)}
+                className={`w-full ${isLight ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} rounded-2xl px-6 py-4 focus:outline-none focus:border-indigo-500 transition-all font-medium`}
+                placeholder="Ex: FGV, FCC, Cebraspe..."
+              />
+            </div>
+            <div>
               <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Quantidade de Questões</label>
               <select 
                 value={quantity}
                 onChange={(e) => setQuantity(Number(e.target.value))}
-                className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-indigo-500 transition-all font-medium appearance-none"
+                className={`w-full ${isLight ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} rounded-2xl px-6 py-4 focus:outline-none focus:border-indigo-500 transition-all font-medium appearance-none`}
               >
                 <option value={5}>5 Questões</option>
                 <option value={10}>10 Questões</option>
