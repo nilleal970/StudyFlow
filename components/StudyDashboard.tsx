@@ -128,6 +128,7 @@ export default function StudyDashboard() {
   const [questionsAttempted, setQuestionsAttempted] = useState(0);
   const [correctAnswers, setCorrectAnswers] = useState(0);
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
+  const [isAddingStudy, setIsAddingStudy] = useState(false);
 
   const loadGuestData = async () => {
     setIsGuestMode(true);
@@ -421,9 +422,10 @@ export default function StudyDashboard() {
               <button 
                 type="button"
                 onClick={loadGuestData}
-                className="w-full py-4 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded-2xl font-black text-sm hover:bg-amber-500/20 transition-all active:scale-95"
+                className="w-full py-4 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded-2xl font-black text-sm hover:bg-amber-500/20 transition-all active:scale-95 flex flex-col items-center gap-1"
               >
-                ENTRAR COMO CONVIDADO (MODO OFFLINE)
+                <span>ENTRAR COMO CONVIDADO (MODO OFFLINE)</span>
+                <span className="text-[10px] opacity-60 font-medium">Seus dados serão salvos apenas neste navegador</span>
               </button>
 
               <button 
@@ -609,12 +611,25 @@ export default function StudyDashboard() {
 
   const handleAddStudy = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStudy.title || !user) return;
-    await addStudy(user.uid, newStudy.title, newStudy.category, newStudy.startDate);
-    setStudies(await loadStudies(user.uid));
-    setIsModalOpen(false);
-    setNewStudy({ title: '', category: '', startDate: format(new Date(), 'yyyy-MM-dd') });
-    setActiveTab('subjects');
+    if (!newStudy.title || !user) {
+      alert('Por favor, preencha o título.');
+      return;
+    }
+    
+    setIsAddingStudy(true);
+    try {
+      await addStudy(user.uid, newStudy.title, newStudy.category, newStudy.startDate);
+      const updatedStudies = await loadStudies(user.uid);
+      setStudies(updatedStudies);
+      setIsModalOpen(false);
+      setNewStudy({ title: '', category: '', startDate: format(new Date(), 'yyyy-MM-dd') });
+      setActiveTab('subjects');
+    } catch (error) {
+      console.error('Error adding study:', error);
+      alert('Erro ao criar conteúdo. Tente novamente.');
+    } finally {
+      setIsAddingStudy(false);
+    }
   };
 
   const openStudySession = (task: any) => {
@@ -1249,7 +1264,20 @@ export default function StudyDashboard() {
                 <FormInput label="Título do Conteúdo" value={newStudy.title} onChange={v => setNewStudy({...newStudy, title: v})} placeholder="Ex: Anatomia Humana" theme={theme} />
                 <FormInput label="Categoria / Matéria" value={newStudy.category} onChange={v => setNewStudy({...newStudy, category: v})} placeholder="Ex: Medicina" theme={theme} />
                 <FormInput label="Data de Início" type="date" value={newStudy.startDate} onChange={v => setNewStudy({...newStudy, startDate: v})} theme={theme} />
-                <button type="submit" className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95 mt-6">CRIAR CONTEÚDO</button>
+                <button 
+                  type="submit" 
+                  disabled={isAddingStudy}
+                  className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95 mt-6 flex items-center justify-center gap-3"
+                >
+                  {isAddingStudy ? (
+                    <>
+                      <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      CRIANDO...
+                    </>
+                  ) : (
+                    'CRIAR CONTEÚDO'
+                  )}
+                </button>
               </form>
             </motion.div>
           </div>
@@ -1804,17 +1832,23 @@ function SimuladosView({ simulados, setSimulados, theme, user }: { simulados: Si
   const [showExplanation, setShowExplanation] = useState(false);
 
   const handleGenerate = async () => {
-    if (!subject || !user) return;
+    if (!subject || !user) {
+      alert('Por favor, informe a matéria.');
+      return;
+    }
     setIsGenerating(true);
     try {
       const questions = await generateSimulado(subject, quantity, banca);
+      if (!questions || questions.length === 0) {
+        throw new Error('Nenhuma questão foi gerada pela IA.');
+      }
       const newSimulado: Simulado = {
         id: Math.random().toString(36).substr(2, 9),
         subject: banca ? `${subject} (${banca})` : subject,
         date: new Date().toISOString(),
         questions: questions.map((q, i) => ({ ...q, id: `q-${i}` })),
         score: 0,
-        totalQuestions: quantity,
+        totalQuestions: questions.length,
         completed: false
       };
       const updated = [newSimulado, ...simulados];
@@ -1823,9 +1857,12 @@ function SimuladosView({ simulados, setSimulados, theme, user }: { simulados: Si
       setActiveSimulado(newSimulado);
       setCurrentQuestionIndex(0);
       setShowExplanation(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert('Erro ao gerar simulado. Tente novamente.');
+      const msg = error.message?.includes('API key') 
+        ? 'Chave de API do Gemini não configurada. Configure nos Secrets.' 
+        : 'Erro ao gerar simulado. Verifique sua conexão ou tente um tema diferente.';
+      alert(msg);
     } finally {
       setIsGenerating(false);
     }
