@@ -61,6 +61,8 @@ import {
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import dynamic from 'next/dynamic';
+import { getAuthInstance } from '@/lib/firebase';
+import { onAuthStateChanged, User as FirebaseUser, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'firebase/auth';
 import { StudyContent, RevisionTask, UserProfile, ExamInfo, Simulado, SimuladoQuestion } from '@/lib/scheduler';
 import { 
   loadStudies, 
@@ -94,7 +96,11 @@ export default function StudyDashboard() {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isEditExamModalOpen, setIsEditExamModalOpen] = useState(false);
   const [editingExam, setEditingExam] = useState<ExamInfo | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isGuestMode, setIsGuestMode] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [loginData, setLoginData] = useState({ user: '', password: '' });
   const [loginError, setLoginError] = useState('');
   const [forgotMessage, setForgotMessage] = useState({ text: '', type: 'error' as 'error' | 'success' });
@@ -123,22 +129,70 @@ export default function StudyDashboard() {
   const [correctAnswers, setCorrectAnswers] = useState(0);
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
 
+  const loadGuestData = async () => {
+    setIsGuestMode(true);
+    const guestId = 'guest_user';
+    const [loadedStudies, loadedProfile, loadedExams, loadedSimulados] = await Promise.all([
+      loadStudies(guestId),
+      loadProfile(guestId),
+      loadExams(guestId),
+      loadSimulados(guestId)
+    ]);
+    setStudies(loadedStudies);
+    setUserProfile(loadedProfile);
+    setExams(loadedExams);
+    setSimulados(loadedSimulados);
+    setIsAuthenticated(true);
+    setUser({ uid: guestId, email: 'convidado@studyflow.com', displayName: 'Convidado' } as any);
+    setIsAuthLoading(false);
+  };
+
   useEffect(() => {
-    try {
-      const auth = localStorage.getItem('studyflow_auth');
-      if (auth === 'true') setIsAuthenticated(true);
-    } catch (e) {
-      console.error('LocalStorage access error:', e);
-    }
-    setStudies(loadStudies());
-    setUserProfile(loadProfile());
-    setExams(loadExams());
-    setSimulados(loadSimulados());
+    let unsubscribe: () => void = () => {};
     
+    const checkAuth = async () => {
+      try {
+        const authInstance = getAuthInstance();
+        if (authInstance) {
+          unsubscribe = onAuthStateChanged(authInstance, async (currentUser) => {
+            setUser(currentUser);
+            setIsAuthenticated(!!currentUser);
+            
+            if (currentUser) {
+              const [loadedStudies, loadedProfile, loadedExams, loadedSimulados] = await Promise.all([
+                loadStudies(currentUser.uid),
+                loadProfile(currentUser.uid),
+                loadExams(currentUser.uid),
+                loadSimulados(currentUser.uid)
+              ]);
+              setStudies(loadedStudies);
+              setUserProfile(loadedProfile);
+              setExams(loadedExams);
+              setSimulados(loadedSimulados);
+            } else {
+              setStudies([]);
+              setUserProfile({ name: '', email: '', interestArea: '', level: '' });
+              setExams([]);
+              setSimulados([]);
+            }
+            setIsAuthLoading(false);
+          });
+        } else {
+          setIsAuthLoading(false);
+        }
+      } catch (error: any) {
+        console.error('Firebase initialization error:', error);
+        setIsAuthLoading(false);
+      }
+    };
+
+    checkAuth();
+
     const savedTheme = localStorage.getItem('studyflow_theme') as 'light' | 'dark' | 'system';
     if (savedTheme) setTheme(savedTheme);
     
     setMounted(true);
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -212,45 +266,88 @@ export default function StudyDashboard() {
     }));
   }, [studies]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
-    const user = loginData.user.trim().toLowerCase();
-    const password = loginData.password.trim();
-    
-    if (user === 'camilla' && password === 'luiz@2011') {
-      setIsAuthenticated(true);
-      try {
-        localStorage.setItem('studyflow_auth', 'true');
-      } catch (e) {
-        console.error('LocalStorage set error:', e);
-      }
-    } else {
-      setLoginError('Usuário ou senha incorretos!');
+    const auth = getAuthInstance();
+    if (!auth) {
+      setLoginError('Firebase não configurado. Use o Modo Convidado.');
+      return;
     }
-  };
-
-  const handleLogout = () => {
-    setIsAuthenticated(false);
     try {
-      localStorage.removeItem('studyflow_auth');
-    } catch (e) {
-      console.error('LocalStorage remove error:', e);
+      await signInWithEmailAndPassword(auth, loginData.user, loginData.password);
+    } catch (error: any) {
+      console.error('Login error:', error);
+      setLoginError('E-mail ou senha incorretos!');
     }
   };
 
-  const handleForgot = (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    const auth = getAuthInstance();
+    if (!auth) {
+      setLoginError('Firebase não configurado. Use o Modo Convidado.');
+      return;
+    }
+    try {
+      await createUserWithEmailAndPassword(auth, loginData.user, loginData.password);
+    } catch (error: any) {
+      console.error('Signup error:', error);
+      if (error.code === 'auth/email-already-in-use') {
+        setLoginError('Este e-mail já está em uso.');
+      } else if (error.code === 'auth/weak-password') {
+        setLoginError('A senha deve ter pelo menos 6 caracteres.');
+      } else {
+        setLoginError('Erro ao criar conta. Tente novamente.');
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    if (isGuestMode) {
+      setIsAuthenticated(false);
+      setIsGuestMode(false);
+      setUser(null);
+      return;
+    }
+    try {
+      const auth = getAuthInstance();
+      if (auth) await signOut(auth);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
+  const handleForgot = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotMessage({ text: '', type: 'error' });
-    if (forgotEmail === userProfile.email && userProfile.email !== '') {
-      setForgotMessage({ text: `Um link de recuperação foi enviado para ${forgotEmail}`, type: 'success' });
+    if (!forgotEmail) {
+      setForgotMessage({ text: 'Por favor, insira seu e-mail.', type: 'error' });
+      return;
+    }
+    const auth = getAuthInstance();
+    if (!auth) {
+      setForgotMessage({ text: 'Firebase não configurado.', type: 'error' });
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, forgotEmail);
+      setForgotMessage({ text: 'E-mail de recuperação enviado!', type: 'success' });
       setTimeout(() => setShowForgot(false), 3000);
-    } else {
-      setForgotMessage({ text: 'E-mail não encontrado ou não cadastrado no perfil!', type: 'error' });
+    } catch (error: any) {
+      console.error('Forgot password error:', error);
+      setForgotMessage({ text: 'Erro ao enviar e-mail. Verifique o endereço.', type: 'error' });
     }
   };
 
-  if (!mounted) return null;
+  if (!mounted || isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
   
   if (!isAuthenticated) {
     return (
@@ -265,7 +362,7 @@ export default function StudyDashboard() {
           </div>
 
           {!showForgot ? (
-            <form onSubmit={handleLogin} className="bg-slate-900/50 border border-slate-800 p-10 rounded-[3rem] shadow-2xl space-y-6">
+            <div className="bg-slate-900/50 border border-slate-800 p-10 rounded-[3rem] shadow-2xl space-y-6">
               {loginError && (
                 <motion.div 
                   initial={{ opacity: 0, y: -10 }}
@@ -277,16 +374,16 @@ export default function StudyDashboard() {
               )}
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="block text-xs font-black text-slate-500 uppercase tracking-widest ml-1">Usuário</label>
+                  <label className="block text-xs font-black text-slate-500 uppercase tracking-widest ml-1">E-mail</label>
                   <div className="relative">
-                    <User className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600" size={20} />
+                    <Mail className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600" size={20} />
                     <input 
-                      type="text" 
+                      type="email" 
                       required
                       value={loginData.user}
                       onChange={e => setLoginData({...loginData, user: e.target.value})}
                       className="w-full pl-14 pr-6 py-4 bg-slate-950 border border-slate-800 rounded-2xl text-white font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                      placeholder="Seu usuário"
+                      placeholder="seu@email.com"
                     />
                   </div>
                 </div>
@@ -306,17 +403,28 @@ export default function StudyDashboard() {
                 </div>
               </div>
 
-              <button type="submit" className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xl hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95">
-                ENTRAR
-              </button>
-
-              <div className="bg-slate-950/50 border border-slate-800/50 p-4 rounded-2xl space-y-1">
-                <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest text-center">Acesso Liberado</p>
-                <div className="flex justify-center gap-4 text-xs font-bold">
-                  <span className="text-slate-400">Usuário: <span className="text-indigo-400">Camilla</span></span>
-                  <span className="text-slate-400">Senha: <span className="text-indigo-400">luiz@2011</span></span>
-                </div>
+              <div className="grid grid-cols-2 gap-4">
+                <button 
+                  onClick={handleLogin}
+                  className="py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95"
+                >
+                  ENTRAR
+                </button>
+                <button 
+                  onClick={handleSignup}
+                  className="py-5 bg-slate-800 text-white rounded-2xl font-black text-lg hover:bg-slate-700 transition-all active:scale-95"
+                >
+                  CRIAR CONTA
+                </button>
               </div>
+
+              <button 
+                type="button"
+                onClick={loadGuestData}
+                className="w-full py-4 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded-2xl font-black text-sm hover:bg-amber-500/20 transition-all active:scale-95"
+              >
+                ENTRAR COMO CONVIDADO (MODO OFFLINE)
+              </button>
 
               <button 
                 type="button" 
@@ -325,7 +433,7 @@ export default function StudyDashboard() {
               >
                 Esqueceu a senha?
               </button>
-            </form>
+            </div>
           ) : (
             <form onSubmit={handleForgot} className="bg-slate-900/50 border border-slate-800 p-10 rounded-[3rem] shadow-2xl space-y-6">
               {forgotMessage.text && (
@@ -376,33 +484,36 @@ export default function StudyDashboard() {
     );
   }
 
-  const handleReset = () => {
-    resetSystem();
+  const handleReset = async () => {
+    if (!user) return;
+    await resetSystem(user.uid);
     setIsResetModalOpen(false);
     window.location.reload();
   };
 
-  const handleToggleStatus = (id: string) => {
-    toggleStudyStatus(id);
-    setStudies(loadStudies());
+  const handleToggleStatus = async (id: string) => {
+    if (!user) return;
+    await toggleStudyStatus(user.uid, id);
+    setStudies(await loadStudies(user.uid));
   };
 
-  const skipRevision = () => {
-    if (!selectedTask) return;
+  const skipRevision = async () => {
+    if (!selectedTask || !user) return;
     if (confirm('Deseja pular esta revisão? Ela será marcada como concluída sem registro de tempo.')) {
-      updateRevision(selectedTask.contentId, selectedTask.id, {
+      await updateRevision(user.uid, selectedTask.contentId, selectedTask.id, {
         completedDate: new Date().toISOString(),
         notes: 'Revisão pulada pelo usuário.'
       });
-      setStudies(loadStudies());
+      setStudies(await loadStudies(user.uid));
       setIsStudyModalOpen(false);
       setSelectedTask(null);
     }
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    saveProfile(userProfile);
+    if (!user) return;
+    await saveProfile(user.uid, userProfile);
     alert('Perfil salvo com sucesso!');
   };
 
@@ -460,7 +571,7 @@ export default function StudyDashboard() {
       };
       const updatedExams = [...exams, newExam];
       setExams(updatedExams);
-      saveExams(updatedExams);
+      if (user) await saveExams(user.uid, updatedExams);
       setSyllabusInput('');
       alert('Edital verticalizado com sucesso pela IA!');
       setActiveTab('exams');
@@ -472,11 +583,11 @@ export default function StudyDashboard() {
     }
   };
 
-  const handleDeleteExam = (id: string) => {
+  const handleDeleteExam = async (id: string) => {
     if (confirm('Deseja realmente excluir este edital verticalizado?')) {
       const updated = exams.filter(e => e.id !== id);
       setExams(updated);
-      saveExams(updated);
+      if (user) await saveExams(user.uid, updated);
     }
   };
 
@@ -485,24 +596,25 @@ export default function StudyDashboard() {
     setIsEditExamModalOpen(true);
   };
 
-  const saveEditedExam = (e: React.FormEvent) => {
+  const saveEditedExam = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingExam) return;
+    if (!editingExam || !user) return;
     const updated = exams.map(e => e.id === editingExam.id ? editingExam : e);
     setExams(updated);
-    saveExams(updated);
+    await saveExams(user.uid, updated);
     setIsEditExamModalOpen(false);
     setEditingExam(null);
     alert('Edital atualizado com sucesso!');
   };
 
-  const handleAddStudy = (e: React.FormEvent) => {
+  const handleAddStudy = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStudy.title) return;
-    addStudy(newStudy.title, newStudy.category, newStudy.startDate);
-    setStudies(loadStudies());
+    if (!newStudy.title || !user) return;
+    await addStudy(user.uid, newStudy.title, newStudy.category, newStudy.startDate);
+    setStudies(await loadStudies(user.uid));
     setIsModalOpen(false);
     setNewStudy({ title: '', category: '', startDate: format(new Date(), 'yyyy-MM-dd') });
+    setActiveTab('subjects');
   };
 
   const openStudySession = (task: any) => {
@@ -519,13 +631,13 @@ export default function StudyDashboard() {
     setElapsedSeconds(0);
   };
 
-  const finishSession = () => {
-    if (!selectedTask || !sessionStartTime) return;
+  const finishSession = async () => {
+    if (!selectedTask || !sessionStartTime || !user) return;
     
     const endTime = new Date();
     const durationMinutes = Math.max(1, Math.floor((endTime.getTime() - sessionStartTime.getTime()) / 60000));
     
-    updateRevision(selectedTask.contentId, selectedTask.id, {
+    await updateRevision(user.uid, selectedTask.contentId, selectedTask.id, {
       completedDate: endTime.toISOString(),
       startTime: sessionStartTime.toISOString(),
       endTime: endTime.toISOString(),
@@ -536,7 +648,7 @@ export default function StudyDashboard() {
       difficulty
     });
 
-    setStudies(loadStudies());
+    setStudies(await loadStudies(user.uid));
     setSessionStartTime(null);
     setIsStudyModalOpen(false);
     setSelectedTask(null);
@@ -573,6 +685,16 @@ export default function StudyDashboard() {
         <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mb-12 shadow-lg shadow-indigo-500/20">
           <BrainCircuit className="text-white" size={28} />
         </div>
+        
+        {isGuestMode && (
+          <div className="mb-6 px-2">
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-2 text-center">
+              <Lock size={16} className="text-amber-500 mx-auto mb-1" />
+              <span className="text-[8px] font-black text-amber-500 uppercase tracking-tighter leading-none block">Modo Offline</span>
+            </div>
+          </div>
+        )}
+
         <nav className="flex flex-col gap-6">
           <NavItem icon={<LayoutDashboard size={24} />} active={activeTab === 'dashboard'} onClick={() => changeTab('dashboard')} label="Dashboard" theme={theme} />
           <NavItem icon={<ListTodo size={24} />} active={activeTab === 'tasks'} onClick={() => changeTab('tasks')} label="Tarefas" theme={theme} />
@@ -828,7 +950,7 @@ export default function StudyDashboard() {
                       <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${study.color}20`, color: study.color }}>
                         <BookOpen size={24} />
                       </div>
-                      <button onClick={() => { if(confirm('Excluir este conteúdo?')) { const updated = studies.filter(s => s.id !== study.id); saveStudies(updated); setStudies(updated); } }} className="text-slate-700 hover:text-rose-500 transition-colors">
+                      <button onClick={async () => { if(user && confirm('Excluir este conteúdo?')) { const updated = studies.filter(s => s.id !== study.id); await saveStudies(user.uid, updated); setStudies(updated); } }} className="text-slate-700 hover:text-rose-500 transition-colors">
                         <Trash2 size={20} />
                       </button>
                     </div>
@@ -863,7 +985,7 @@ export default function StudyDashboard() {
                           {study.status === 'active' ? 'Pausar' : 'Ativar'}
                         </button>
                         {study.monthlyRevisionEnabled && study.status === 'active' && (
-                          <button onClick={() => { cancelMonthlyRevisions(study.id); setStudies(loadStudies()); }} className="text-[10px] font-black text-slate-500 hover:text-rose-400 uppercase border border-slate-800 px-3 py-1.5 rounded-xl hover:bg-rose-500/10 transition-all">
+                          <button onClick={async () => { if (user) { await cancelMonthlyRevisions(user.uid, study.id); setStudies(await loadStudies(user.uid)); } }} className="text-[10px] font-black text-slate-500 hover:text-rose-400 uppercase border border-slate-800 px-3 py-1.5 rounded-xl hover:bg-rose-500/10 transition-all">
                             Parar Mensal
                           </button>
                         )}
@@ -931,8 +1053,9 @@ export default function StudyDashboard() {
               >
                 <SimuladosView 
                   simulados={simulados} 
-                  setSimulados={(s) => { setSimulados(s); saveSimulados(s); }} 
+                  setSimulados={setSimulados} 
                   theme={theme}
+                  user={user}
                 />
               </motion.div>
             )}
@@ -1670,7 +1793,7 @@ function CalendarView({ studies, onTaskClick }: { studies: StudyContent[]; onTas
   );
 }
 
-function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado[]; setSimulados: (s: Simulado[]) => void; theme: string }) {
+function SimuladosView({ simulados, setSimulados, theme, user }: { simulados: Simulado[]; setSimulados: (s: Simulado[]) => void; theme: string; user: FirebaseUser | null }) {
   const isLight = theme === 'light';
   const [isGenerating, setIsGenerating] = useState(false);
   const [subject, setSubject] = useState('');
@@ -1681,7 +1804,7 @@ function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado
   const [showExplanation, setShowExplanation] = useState(false);
 
   const handleGenerate = async () => {
-    if (!subject) return;
+    if (!subject || !user) return;
     setIsGenerating(true);
     try {
       const questions = await generateSimulado(subject, quantity, banca);
@@ -1694,7 +1817,9 @@ function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado
         totalQuestions: quantity,
         completed: false
       };
-      setSimulados([newSimulado, ...simulados]);
+      const updated = [newSimulado, ...simulados];
+      setSimulados(updated);
+      await saveSimulados(user.uid, updated);
       setActiveSimulado(newSimulado);
       setCurrentQuestionIndex(0);
       setShowExplanation(false);
@@ -1706,8 +1831,8 @@ function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado
     }
   };
 
-  const handleAnswer = (optionIndex: number) => {
-    if (!activeSimulado || activeSimulado.questions[currentQuestionIndex].userAnswerIndex !== undefined) return;
+  const handleAnswer = async (optionIndex: number) => {
+    if (!activeSimulado || !user || activeSimulado.questions[currentQuestionIndex].userAnswerIndex !== undefined) return;
 
     const updatedQuestions = [...activeSimulado.questions];
     const currentQuestion = updatedQuestions[currentQuestionIndex];
@@ -1727,9 +1852,9 @@ function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado
     setActiveSimulado(updatedSimulado);
     setShowExplanation(true);
 
-    // Update the main list
     const updatedList = simulados.map(s => s.id === updatedSimulado.id ? updatedSimulado : s);
     setSimulados(updatedList);
+    await saveSimulados(user.uid, updatedList);
   };
 
   const nextQuestion = () => {
@@ -1739,9 +1864,12 @@ function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado
     }
   };
 
-  const deleteSimulado = (id: string) => {
+  const deleteSimuladoItem = async (id: string) => {
+    if (!user) return;
     if (confirm('Deseja excluir este simulado?')) {
-      setSimulados(simulados.filter(s => s.id !== id));
+      const updated = simulados.filter(s => s.id !== id);
+      setSimulados(updated);
+      await saveSimulados(user.uid, updated);
     }
   };
 
@@ -1967,7 +2095,7 @@ function SimuladosView({ simulados, setSimulados, theme }: { simulados: Simulado
                   >
                     {s.completed ? 'REVISAR' : 'CONTINUAR'}
                   </button>
-                  <button onClick={() => deleteSimulado(s.id)} className="p-2 text-slate-700 hover:text-rose-500 transition-colors">
+                  <button onClick={() => deleteSimuladoItem(s.id)} className="p-2 text-slate-700 hover:text-rose-500 transition-colors">
                     <Trash2 size={18} />
                   </button>
                 </div>
