@@ -1,227 +1,177 @@
-import { StudyContent, RevisionTask, UserProfile, ExamInfo, Simulado } from './scheduler';
-import { calculateRevisions, getNextMonthlyRevision } from './scheduler';
-import { getDb } from './firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from './firebase';
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  getDoc,
+} from 'firebase/firestore';
+import { StudyContent, RevisionTask, UserProfile, ExamInfo, Simulado, calculateRevisions, getNextMonthlyRevision } from './scheduler';
+import { format, parse } from 'date-fns';
 
-const PROFILES_COLLECTION = 'profiles';
-
-const isBrowser = typeof window !== 'undefined';
-
-const getLocal = (key: string) => {
-  if (!isBrowser) return null;
-  const data = localStorage.getItem(key);
-  return data ? JSON.parse(data) : null;
-};
-
-const setLocal = (key: string, value: any) => {
-  if (!isBrowser) return;
-  localStorage.setItem(key, JSON.stringify(value));
-};
-
-export const saveStudies = async (userId: string, studies: StudyContent[]) => {
-  const db = getDb();
-  if (db) {
-    const userDoc = doc(db, 'users', userId);
-    await setDoc(userDoc, { studies }, { merge: true });
-  } else {
-    setLocal(`studies_${userId}`, studies);
+// Helper para converter string de data para Date sem problema de timezone
+const parseDateSafe = (dateStr: string): Date => {
+  if (!dateStr) return new Date();
+  // Formato dd/MM/yyyy
+  if (dateStr.includes('/')) {
+    const [day, month, year] = dateStr.split('/').map(Number);
+    return new Date(year, month - 1, day);
   }
+  // Formato yyyy-MM-dd
+  if (dateStr.includes('-')) {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+  return new Date();
 };
+
+const COLORS = [
+  '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316',
+  '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6'
+];
+
+const getRandomColor = () => COLORS[Math.floor(Math.random() * COLORS.length)];
+
+// ─── Studies ────────────────────────────────────────────────────────────────
 
 export const loadStudies = async (userId: string): Promise<StudyContent[]> => {
-  const db = getDb();
-  if (db) {
-    const userDoc = doc(db, 'users', userId);
-    const snap = await getDoc(userDoc);
-    return snap.exists() ? snap.data().studies || [] : [];
-  }
-  return getLocal(`studies_${userId}`) || [];
-};
-
-export const saveProfile = async (userId: string, profile: UserProfile) => {
-  const db = getDb();
-  if (db) {
-    const profileDoc = doc(db, PROFILES_COLLECTION, userId);
-    await setDoc(profileDoc, profile);
-  } else {
-    setLocal(`profile_${userId}`, profile);
+  try {
+    if (!db) return getLocalStudies(userId);
+    const snapshot = await getDocs(collection(db, 'users', userId, 'studies'));
+    const studies: StudyContent[] = [];
+    snapshot.forEach(doc => studies.push(doc.data() as StudyContent));
+    return studies.sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+  } catch {
+    return getLocalStudies(userId);
   }
 };
 
-export const loadProfile = async (userId: string): Promise<UserProfile> => {
-  const db = getDb();
-  if (db) {
-    const profileDoc = doc(db, PROFILES_COLLECTION, userId);
-    const snap = await getDoc(profileDoc);
-    return snap.exists() ? snap.data() as UserProfile : { name: '', email: '', interestArea: '', level: '' };
-  }
-  return getLocal(`profile_${userId}`) || { name: '', email: '', interestArea: '', level: '' };
-};
-
-export const saveExams = async (userId: string, exams: ExamInfo[]) => {
-  const db = getDb();
-  if (db) {
-    const userDoc = doc(db, 'users', userId);
-    await setDoc(userDoc, { exams }, { merge: true });
-  } else {
-    setLocal(`exams_${userId}`, exams);
+export const saveStudies = async (userId: string, studies: StudyContent[]): Promise<void> => {
+  try {
+    if (!db) { saveLocalStudies(userId, studies); return; }
+    for (const study of studies) {
+      await setDoc(doc(db, 'users', userId, 'studies', study.id), study);
+    }
+  } catch {
+    saveLocalStudies(userId, studies);
   }
 };
 
-export const loadExams = async (userId: string): Promise<ExamInfo[]> => {
-  const db = getDb();
-  if (db) {
-    const userDoc = doc(db, 'users', userId);
-    const snap = await getDoc(userDoc);
-    return snap.exists() ? snap.data().exams || [] : [];
-  }
-  return getLocal(`exams_${userId}`) || [];
-};
+export const addStudy = async (
+  userId: string,
+  title: string,
+  category: string,
+  startDateStr: string
+): Promise<void> => {
+  // Converte a data com segurança, sem problema de timezone
+  const startDate = parseDateSafe(startDateStr);
 
-export const saveSimulados = async (userId: string, simulados: Simulado[]) => {
-  const db = getDb();
-  if (db) {
-    const userDoc = doc(db, 'users', userId);
-    await setDoc(userDoc, { simulados }, { merge: true });
-  } else {
-    setLocal(`simulados_${userId}`, simulados);
-  }
-};
+  // Salva a data no formato yyyy-MM-dd para consistência
+  const startDateFormatted = format(startDate, 'yyyy-MM-dd');
 
-export const loadSimulados = async (userId: string): Promise<Simulado[]> => {
-  const db = getDb();
-  if (db) {
-    const userDoc = doc(db, 'users', userId);
-    const snap = await getDoc(userDoc);
-    return snap.exists() ? snap.data().simulados || [] : [];
-  }
-  return getLocal(`simulados_${userId}`) || [];
-};
-
-export const resetSystem = async (userId: string) => {
-  const db = getDb();
-  if (db) {
-    const userDoc = doc(db, 'users', userId);
-    const profileDoc = doc(db, PROFILES_COLLECTION, userId);
-    await setDoc(userDoc, { studies: [], exams: [], simulados: [] }, { merge: true });
-    await setDoc(profileDoc, { name: '', email: '', interestArea: '', level: '' });
-  } else {
-    setLocal(`studies_${userId}`, []);
-    setLocal(`exams_${userId}`, []);
-    setLocal(`simulados_${userId}`, []);
-    setLocal(`profile_${userId}`, { name: '', email: '', interestArea: '', level: '' });
-  }
-};
-
-export const addStudy = async (userId: string, title: string, category: string, startDate: string): Promise<StudyContent> => {
-  const studies = await loadStudies(userId);
-  const id = Math.random().toString(36).substr(2, 9);
-  
-  const initialRevisions = calculateRevisions(new Date(startDate));
-  
-  const colors = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#06b6d4'];
-  const randomColor = colors[Math.floor(Math.random() * colors.length)];
+  const revisionTemplates = calculateRevisions(startDate);
 
   const newStudy: StudyContent = {
-    id,
+    id: Math.random().toString(36).substr(2, 9),
     title,
     category,
-    startDate,
+    startDate: startDateFormatted,
     status: 'active',
+    revisions: revisionTemplates.map(r => ({
+      ...r,
+      id: Math.random().toString(36).substr(2, 9),
+      contentId: '',
+    })),
     monthlyRevisionEnabled: true,
     totalMinutes: 0,
     totalQuestions: 0,
     totalHits: 0,
-    notes: '',
-    color: randomColor,
-    revisions: initialRevisions.map((rev: any, index: number) => ({
-      ...rev,
-      id: `${id}-rev-${index}`,
-      contentId: id,
-      notes: '',
-    })),
+    color: getRandomColor(),
   };
 
-  await saveStudies(userId, [...studies, newStudy]);
-  return newStudy;
-};
+  // Atualiza o contentId nas revisões
+  newStudy.revisions = newStudy.revisions.map(r => ({ ...r, contentId: newStudy.id }));
 
-export const updateRevision = async (userId: string, contentId: string, revisionId: string, updates: Partial<RevisionTask>) => {
-  const studies = await loadStudies(userId);
-  const updated = studies.map(s => {
-    if (s.id === contentId) {
-      const updatedRevisions = s.revisions.map(r => {
-        if (r.id === revisionId) {
-          return { ...r, ...updates };
-        }
-        return r;
-      });
-
-      const completedRev = updatedRevisions.find(r => r.id === revisionId);
-      const wasJustCompleted = updates.completedDate && !s.revisions.find(r => r.id === revisionId)?.completedDate;
-      
-      if (wasJustCompleted && (completedRev?.type === '1m' || completedRev?.type === 'monthly') && s.monthlyRevisionEnabled) {
-        const nextRev = getNextMonthlyRevision(completedRev.scheduledDate);
-        updatedRevisions.push({
-          ...nextRev,
-          id: `${s.id}-rev-${Date.now()}`,
-          contentId: s.id,
-          notes: '',
-        });
-      }
-
-      const totalMinutes = updatedRevisions.reduce((acc, r) => acc + (r.durationMinutes || 0), 0);
-      const totalQuestions = updatedRevisions.reduce((acc, r) => acc + (r.questionsAttempted || 0), 0);
-      const totalHits = updatedRevisions.reduce((acc, r) => acc + (r.correctAnswers || 0), 0);
-
-      return { ...s, revisions: updatedRevisions, totalMinutes, totalQuestions, totalHits };
+  try {
+    if (!db) { 
+      const studies = getLocalStudies(userId);
+      saveLocalStudies(userId, [...studies, newStudy]);
+      return;
     }
-    return s;
-  });
-  await saveStudies(userId, updated);
-};
-
-export const updateStudyNotes = async (userId: string, id: string, notes: string) => {
-  const studies = await loadStudies(userId);
-  const updated = studies.map(s => s.id === id ? { ...s, notes } : s);
-  await saveStudies(userId, updated);
-};
-
-export const toggleStudyStatus = async (userId: string, id: string) => {
-  const studies = await loadStudies(userId);
-  const updated = studies.map(s => {
-    if (s.id === id) {
-      const newStatus: 'active' | 'cancelled' = s.status === 'active' ? 'cancelled' : 'active';
-      return { ...s, status: newStatus };
-    }
-    return s;
-  });
-  await saveStudies(userId, updated);
-};
-
-export const cancelMonthlyRevisions = async (userId: string, contentId: string) => {
-  const studies = await loadStudies(userId);
-  const updated = studies.map(s => {
-    if (s.id === contentId) {
-      return { ...s, monthlyRevisionEnabled: false };
-    }
-    return s;
-  });
-  await saveStudies(userId, updated);
-};
-
-export const deleteExam = async (userId: string, id: string) => {
-  const exams = await loadExams(userId);
-  await saveExams(userId, exams.filter(e => e.id !== id));
-};
-
-export const updateExam = async (userId: string, exam: ExamInfo) => {
-  const exams = await loadExams(userId);
-  const index = exams.findIndex(e => e.id === exam.id);
-  if (index !== -1) {
-    exams[index] = exam;
-    await saveExams(userId, exams);
-  } else {
-    await saveExams(userId, [...exams, exam]);
+    await setDoc(doc(db, 'users', userId, 'studies', newStudy.id), newStudy);
+  } catch {
+    const studies = getLocalStudies(userId);
+    saveLocalStudies(userId, [...studies, newStudy]);
   }
 };
+
+export const updateRevision = async (
+  userId: string,
+  studyId: string,
+  revisionId: string,
+  data: Partial<RevisionTask>
+): Promise<void> => {
+  try {
+    const studies = await loadStudies(userId);
+    const study = studies.find(s => s.id === studyId);
+    if (!study) return;
+
+    study.revisions = study.revisions.map(r =>
+      r.id === revisionId ? { ...r, ...data } : r
+    );
+
+    // Atualiza totais
+    if (data.durationMinutes) study.totalMinutes = (study.totalMinutes || 0) + data.durationMinutes;
+    if (data.questionsAttempted) study.totalQuestions = (study.totalQuestions || 0) + data.questionsAttempted;
+    if (data.correctAnswers) study.totalHits = (study.totalHits || 0) + data.correctAnswers;
+
+    // Agenda próxima revisão mensal se habilitada
+    if (study.monthlyRevisionEnabled) {
+      const hasMonthlyPending = study.revisions.some(r => r.type === 'monthly' && !r.completedDate);
+      if (!hasMonthlyPending) {
+        const lastRevision = study.revisions[study.revisions.length - 1];
+        const nextMonthly = getNextMonthlyRevision(lastRevision.scheduledDate);
+        study.revisions.push({
+          ...nextMonthly,
+          id: Math.random().toString(36).substr(2, 9),
+          contentId: studyId,
+        });
+      }
+    }
+
+    if (db) {
+      await setDoc(doc(db, 'users', userId, 'studies', studyId), study);
+    } else {
+      const studies = getLocalStudies(userId);
+      saveLocalStudies(userId, studies.map(s => s.id === studyId ? study : s));
+    }
+  } catch (error) {
+    console.error('Error updating revision:', error);
+  }
+};
+
+export const cancelMonthlyRevisions = async (userId: string, studyId: string): Promise<void> => {
+  try {
+    const studies = await loadStudies(userId);
+    const study = studies.find(s => s.id === studyId);
+    if (!study) return;
+
+    study.monthlyRevisionEnabled = false;
+    study.revisions = study.revisions.filter(r => r.type !== 'monthly' || r.completedDate);
+
+    if (db) {
+      await setDoc(doc(db, 'users', userId, 'studies', studyId), study);
+    } else {
+      saveLocalStudies(userId, studies.map(s => s.id === studyId ? study : s));
+    }
+  } catch (error) {
+    console.error('Error cancelling monthly revisions:', error);
+  }
+};
+
+export const updateStudyNotes = async (userId: string, studyId: string, notes: string): Promise<void> => {
+  try {
+    const studies = await loadStudies(userId);
+    const study = studies.find(s => s.id === studyId);
+
