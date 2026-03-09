@@ -202,7 +202,10 @@ export const resetSystem = async (userId: string): Promise<void> => {
       const snapshot = await getDocs(collection(db, 'users', userId, 'studies'));
       for (const d of snapshot.docs) await deleteDoc(d.ref);
     } else {
-      localStorage.removeItem(`studyflow_studies_${userId}`);
+      // Adicione a verificação aqui também
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(`studyflow_studies_${userId}`);
+      }
     }
   } catch (error) {
     console.error('Error resetting system:', error);
@@ -314,44 +317,72 @@ export const saveSimulados = async (userId: string, simulados: Simulado[]): Prom
 
 const getLocalStudies = (userId: string): StudyContent[] => {
   try {
-    const data = localStorage.getItem(`studyflow_studies_${userId}`);
-    return data ? JSON.parse(data) : [];
+    if (typeof window !== 'undefined') { // Adicionado
+      const data = localStorage.getItem(`studyflow_studies_${userId}`);
+      return data ? JSON.parse(data) : [];
+    }
+    return []; // Retorna vazio se não estiver no navegador
   } catch { return []; }
 };
 
 const saveLocalStudies = (userId: string, studies: StudyContent[]) => {
-  try { localStorage.setItem(`studyflow_studies_${userId}`, JSON.stringify(studies)); } catch {}
+  try {
+    if (typeof window !== 'undefined') { // Adicionado
+      localStorage.setItem(`studyflow_studies_${userId}`, JSON.stringify(studies));
+    }
+  } catch {}
 };
 
 const getLocalProfile = (userId: string): UserProfile => {
   try {
-    const data = localStorage.getItem(`studyflow_profile_${userId}`);
-    return data ? JSON.parse(data) : { name: '', email: '', interestArea: '', level: '' };
+    if (typeof window !== 'undefined') { // Adicionado
+      const data = localStorage.getItem(`studyflow_profile_${userId}`);
+      return data ? JSON.parse(data) : { name: '', email: '', interestArea: '', level: '' };
+    }
+    return { name: '', email: '', interestArea: '', level: '' }; // Retorna padrão se não estiver no navegador
   } catch { return { name: '', email: '', interestArea: '', level: '' }; }
 };
 
 const saveLocalProfile = (userId: string, profile: UserProfile) => {
-  try { localStorage.setItem(`studyflow_profile_${userId}`, JSON.stringify(profile)); } catch {}
+  try {
+    if (typeof window !== 'undefined') { // Adicionado
+      localStorage.setItem(`studyflow_profile_${userId}`, JSON.stringify(profile));
+    }
+  } catch {}
 };
 
 const getLocalExams = (userId: string): ExamInfo[] => {
   try {
-    const data = localStorage.getItem(`studyflow_exams_${userId}`);
-    return data ? JSON.parse(data) : [];
+    if (typeof window !== 'undefined') { // Adicionado
+      const data = localStorage.getItem(`studyflow_exams_${userId}`);
+      return data ? JSON.parse(data) : [];
+    }
+    return []; // Retorna vazio se não estiver no navegador
   } catch { return []; }
 };
 
 const saveLocalExams = (userId: string, exams: ExamInfo[]) => {
-  try { localStorage.setItem(`studyflow_exams_${userId}`, JSON.stringify(exams)); } catch {}
+  try {
+    if (typeof window !== 'undefined') { // Adicionado
+      localStorage.setItem(`studyflow_exams_${userId}`, JSON.stringify(exams));
+    }
+  } catch {}
 };
 
 const getLocalSimulados = (userId: string): Simulado[] => {
   try {
-    const data = localStorage.getItem(`studyflow_simulados_${userId}`);
-    return data ? JSON.parse(data) : [];
+    if (typeof window !== 'undefined') { // Adicionado
+      const data = localStorage.getItem(`studyflow_simulados_${userId}`);
+      return data ? JSON.parse(data) : [];
+    }
+    return []; // Retorna vazio se não estiver no navegador
   } catch { return []; }
 };
 
 const saveLocalSimulados = (userId: string, simulados: Simulado[]) => {
-  try { localStorage.setItem(`studyflow_simulados_${userId}`, JSON.stringify(simulados)); } catch {}
+  try {
+    if (typeof window !== 'undefined') { // Adicionado
+      localStorage.setItem(`studyflow_simulados_${userId}`, JSON.stringify(simulados));
+    }
+  } catch {}
 };
